@@ -45,104 +45,63 @@ class GeneratorDistribution(object):
         return np.linspace(-self.range, self.range, N) + \
             np.random.random(N) * 0.01
 
-with tf.device("/gpu:0"):
-    def linear(input, output_dim, scope=None, stddev=1.0):
-        norm = tf.random_normal_initializer(stddev=stddev)
-        const = tf.constant_initializer(0.0)
-        with tf.variable_scope(scope or 'linear'):
-            w = tf.get_variable('w', [input.get_shape()[1], output_dim], initializer=norm)
-            b = tf.get_variable('b', [output_dim], initializer=const)
-            return tf.matmul(input, w) + b
+
+def linear(input, output_dim, scope=None, stddev=1.0):
+    norm = tf.random_normal_initializer(stddev=stddev)
+    const = tf.constant_initializer(0.0)
+    with tf.variable_scope(scope or 'linear'):
+        w = tf.get_variable('w', [input.get_shape()[1], output_dim], initializer=norm)
+        b = tf.get_variable('b', [output_dim], initializer=const)
+        return tf.matmul(input, w) + b
 
 
-    def generator(input, h_dim):
-        h0 = tf.nn.softplus(linear(input, h_dim, 'g0'))
-        h1 = linear(h0, 1, 'g1')
-        return h1
+def generator(input, h_dim):
+    h0 = tf.nn.softplus(linear(input, h_dim, 'g0'))
+    h1 = linear(h0, 1, 'g1')
+    return h1
 
 
-    def discriminator(input, h_dim, minibatch_layer=True):
-        h0 = tf.tanh(linear(input, h_dim * 2, 'd0'))
-        h1 = tf.tanh(linear(h0, h_dim * 2, 'd1'))
+def discriminator(input, h_dim, minibatch_layer=True):
+    h0 = tf.tanh(linear(input, h_dim * 2, 'd0'))
+    h1 = tf.tanh(linear(h0, h_dim * 2, 'd1'))
 
-        # without the minibatch layer, the discriminator needs an additional layer
-        # to have enough capacity to separate the two distributions correctly
-        if minibatch_layer:
-            h2 = minibatch(h1)
-        else:
-            h2 = tf.tanh(linear(h1, h_dim * 2, scope='d2'))
+    # without the minibatch layer, the discriminator needs an additional layer
+    # to have enough capacity to separate the two distributions correctly
+    if minibatch_layer:
+        h2 = minibatch(h1)
+    else:
+        h2 = tf.tanh(linear(h1, h_dim * 2, scope='d2'))
 
-        h3 = tf.sigmoid(linear(h2, 1, scope='d3'))
-        return h3
-
-
-    def minibatch(input, num_kernels=5, kernel_dim=3):
-        x = linear(input, num_kernels * kernel_dim, scope='minibatch', stddev=0.02)
-        activation = tf.reshape(x, (-1, num_kernels, kernel_dim))
-        diffs = tf.expand_dims(activation, 3) - tf.expand_dims(tf.transpose(activation, [1, 2, 0]), 0)
-        abs_diffs = tf.reduce_sum(tf.abs(diffs), 2)
-        minibatch_features = tf.reduce_sum(tf.exp(-abs_diffs), 2)
-        return tf.concat(1, [input, minibatch_features])
-
-    def optimizer(loss, var_list, initial_learning_rate):
-        decay = 0.95
-        num_decay_steps = 150
-        batch = tf.Variable(0)
-        learning_rate = tf.train.exponential_decay(
-            initial_learning_rate,
-            batch,
-            num_decay_steps,
-            decay,
-            staircase=True
-        )
+    h3 = tf.sigmoid(linear(h2, 1, scope='d3'))
+    return h3
 
 
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(
-            loss,
-            global_step=batch,
-            var_list=var_list
-        )
-        return optimizer
+def minibatch(input, num_kernels=5, kernel_dim=3):
+    x = linear(input, num_kernels * kernel_dim, scope='minibatch', stddev=0.02)
+    activation = tf.reshape(x, (-1, num_kernels, kernel_dim))
+    diffs = tf.expand_dims(activation, 3) - tf.expand_dims(tf.transpose(activation, [1, 2, 0]), 0)
+    abs_diffs = tf.reduce_sum(tf.abs(diffs), 2)
+    minibatch_features = tf.reduce_sum(tf.exp(-abs_diffs), 2)
+    return tf.concat(1, [input, minibatch_features])
 
 
-
-
-    def optimizer2(loss, var_list, initial_learning_rate):
-        decay = 0.95
-        num_decay_steps = 150
-        batch = tf.Variable(0)
-        learning_rate = tf.train.exponential_decay(
-            initial_learning_rate,
-            batch,
-            num_decay_steps,
-            decay,
-            staircase=True
-        )
-
-
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-        return optimizer
-
-
-
-    def neg_optimizer2(loss, var_list, initial_learning_rate):
-        decay = 0.95
-        num_decay_steps = 150
-        batch = tf.Variable(0)
-        learning_rate = tf.train.exponential_decay(
-            initial_learning_rate,
-            batch,
-            num_decay_steps,
-            decay,
-            staircase=True
-        )
-
-
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-        return optimizer
-
-
-
+def optimizer(loss, var_list, initial_learning_rate):
+    decay = 0.95
+    num_decay_steps = 150
+    batch = tf.Variable(0)
+    learning_rate = tf.train.exponential_decay(
+        initial_learning_rate,
+        batch,
+        num_decay_steps,
+        decay,
+        staircase=True
+    )
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(
+        loss,
+        global_step=batch,
+        var_list=var_list
+    )
+    return optimizer
 
 
 class GAN(object):
@@ -183,7 +142,7 @@ class GAN(object):
             self.z = tf.placeholder(tf.float32, shape=(self.batch_size, 1))
             self.G = generator(self.z, self.mlp_hidden_size)
 
-        # The discriminator tries two tell the difference between samples from the
+        # The discriminator tries to tell the difference between samples from the
         # true data distribution (self.x) and the generated samples (self.z).
         #
         # Here we create two copies of the discriminator network (that share parameters),
@@ -200,62 +159,13 @@ class GAN(object):
         self.loss_g = tf.reduce_mean(-tf.log(self.D2))
 
         self.d_pre_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='D_pre')
-        self.d_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='Disc')   # This effectively is a pointer to the variable
+        self.d_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='Disc')
         self.g_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='Gen')
 
         self.opt_d = optimizer(self.loss_d, self.d_params, self.learning_rate)
         self.opt_g = optimizer(self.loss_g, self.g_params, self.learning_rate)
 
-        self.opt_d_2 = optimizer2(self.loss_d, self.d_params, self.learning_rate)
-        self.opt_g_2 = optimizer2(self.loss_g, self.g_params, self.learning_rate)
-
-        self.grad_d = self.opt_d_2.compute_gradients(self.loss_d, self.d_params)
-        self.grad_g = self.opt_g_2.compute_gradients(self.loss_g, self.g_params)
-
-        self.apply_grad_d = self.opt_d_2.apply_gradients(self.grad_d, global_step=tf.Variable(0))
-        self.apply_grad_g = self.opt_d_2.apply_gradients(self.grad_g, global_step=tf.Variable(0))
-
-        self.placeholder_d = tf.placeholder(self.d_params.dtype, shape=self.d_params.get_shape())
-        self.placeholder_g = tf.placeholder(self.g_params.dtype, shape=self.g_params.get_shape())
-
-        self.assign_d = self.d_params.update(placeholder_d)
-        self.assign_d = self.d_params.update(placeholder_d)
-
-        #self.saver_d = tf.train.Saver(self.d_params)
-        #self.saver_g = tf.train.Saver(self.g_params)
-
-    def compute_gradients(self, session, x, z):
-        # run a single update
- 
-        # Compute the gradients
-        session.run([self.grad_d], {
-            self.x: np.reshape(x, (self.batch_size, 1)),
-            self.z: np.reshape(z, (self.batch_size, 1))
-        })
-        # loss_d is the loss returned by running one minibatch update step. 
-        # it is retreived because we want to print it
-        #z = self.gen.sample(self.batch_size)
-        session.run([self.grad_g], {
-            self.z: np.reshape(z, (self.batch_size, 1))
-        })
-
-
-
-
-    def apply_gradients(self, session, x, z):
-        loss_d, _ = session.run([self.loss_d,self.apply_grad_d], {
-            self.x: np.reshape(x, (self.batch_size, 1)),
-            self.z: np.reshape(z, (self.batch_size, 1))
-        })
-        loss_g, _ = session.run([self.loss_g,self.apply_grad_g], {
-            self.z: np.reshape(z, (self.batch_size, 1))
-        })
-
-        return loss_d, loss_g
-
-
     def train(self):
-        # This begins a single ssession
         with tf.Session() as session:
             tf.global_variables_initializer().run()
 
@@ -265,7 +175,7 @@ class GAN(object):
                 d = (np.random.random(self.batch_size) - 0.5) * 10.0
                 labels = norm.pdf(d, loc=self.data.mu, scale=self.data.sigma)
                 pretrain_loss, _ = session.run([self.pre_loss, self.pre_opt], {
-                    self.pre_input: np.reshape(d, (self.batch_size, 1)),    
+                    self.pre_input: np.reshape(d, (self.batch_size, 1)),
                     self.pre_labels: np.reshape(labels, (self.batch_size, 1))
                 })
             self.weightsD = session.run(self.d_pre_params)
@@ -275,34 +185,19 @@ class GAN(object):
                 session.run(v.assign(self.weightsD[i]))
 
             for step in xrange(self.num_steps):
-
-                ## Save discriminator and generator variables
+                # update discriminator
                 x = self.data.sample(self.batch_size)
                 z = self.gen.sample(self.batch_size)
+                loss_d, _ = session.run([self.loss_d, self.opt_d], {
+                    self.x: np.reshape(x, (self.batch_size, 1)),
+                    self.z: np.reshape(z, (self.batch_size, 1))
+                })
 
-                d_path = self.saver_d.save(session, 'd')
-                g_path = self.saver_g.save(session, 'g')
-
-                self.weightsD = session.run(self.d_params)
-                self.weightsG = session.run(self.g_params)
-
-                self.compute_gradients(session,x,z)
-                self.apply_gradients(session,x,z)
-
-                x = self.data.sample(self.batch_size)
+                # update generator
                 z = self.gen.sample(self.batch_size)
-                self.compute_gradients(session,x,z)
-
-                # Copy back original values of network
-                # Should try a better method
-                for i, v in enumerate(self.d_params):
-                    session.run(v.assign(self.weightsD[i]))
-                for i, v in enumerate(self.g_params):
-                    session.run(v.assign(self.weightsG[i]))
-                #self.saver_d.restore(session, d_path)
-                #self.saver_g.restore(session, g_path)
-                loss_d, loss_g = self.apply_gradients(session,x,z)
-
+                loss_g, _ = session.run([self.loss_g, self.opt_g], {
+                    self.z: np.reshape(z, (self.batch_size, 1))
+                })
 
                 if step % self.log_every == 0:
                     print('{}: {}\t{}'.format(step, loss_d, loss_g))
