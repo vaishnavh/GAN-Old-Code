@@ -84,6 +84,9 @@ with tf.device("/gpu:0"):
         minibatch_features = tf.reduce_sum(tf.exp(-abs_diffs), 2)
         return tf.concat(1, [input, minibatch_features])
 
+
+
+
     def optimizer(loss, var_list, initial_learning_rate):
         decay = 0.95
         num_decay_steps = 150
@@ -97,51 +100,28 @@ with tf.device("/gpu:0"):
         )
 
 
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(
-            loss,
-            global_step=batch,
-            var_list=var_list
-        )
-        return optimizer
-
-
-
-
-    def optimizer2(loss, var_list, initial_learning_rate):
-        decay = 0.95
-        num_decay_steps = 150
-        batch = tf.Variable(0)
-        learning_rate = tf.train.exponential_decay(
-            initial_learning_rate,
-            batch,
-            num_decay_steps,
-            decay,
-            staircase=True
-        )
-
-
         optimizer = tf.train.GradientDescentOptimizer(learning_rate)
         return optimizer
 
 
 
-    def neg_optimizer2(loss, var_list, initial_learning_rate):
-        decay = 0.95
-        num_decay_steps = 150
-        batch = tf.Variable(0)
-        learning_rate = tf.train.exponential_decay(
-            initial_learning_rate,
-            batch,
-            num_decay_steps,
-            decay,
-            staircase=True
-        )
-
-
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-        return optimizer
-
-
+def optimizer_orig(loss, var_list, initial_learning_rate):
+    decay = 0.95
+    num_decay_steps = 150
+    batch = tf.Variable(0)
+    learning_rate = tf.train.exponential_decay(
+        initial_learning_rate,
+        batch,
+        num_decay_steps,
+        decay,
+        staircase=True
+    )
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(
+        loss,
+        global_step=batch,
+        var_list=var_list
+    )
+    return optimizer
 
 
 
@@ -175,7 +155,7 @@ class GAN(object):
             self.pre_labels = tf.placeholder(tf.float32, shape=(self.batch_size, 1))
             D_pre = discriminator(self.pre_input, self.mlp_hidden_size, self.minibatch)
             self.pre_loss = tf.reduce_mean(tf.square(D_pre - self.pre_labels))
-            self.pre_opt = optimizer(self.pre_loss, None, self.learning_rate)
+            self.pre_opt = optimizer_orig(self.pre_loss, None, self.learning_rate)
 
         # This defines the generator network - it takes samples from a noise
         # distribution as input, and passes them through an MLP.
@@ -206,20 +186,20 @@ class GAN(object):
         self.opt_d = optimizer(self.loss_d, self.d_params, self.learning_rate)
         self.opt_g = optimizer(self.loss_g, self.g_params, self.learning_rate)
 
-        self.opt_d_2 = optimizer2(self.loss_d, self.d_params, self.learning_rate)
-        self.opt_g_2 = optimizer2(self.loss_g, self.g_params, self.learning_rate)
+        self.grad_d = self.opt_d.compute_gradients(self.loss_d, self.d_params)
+        self.grad_g = self.opt_g.compute_gradients(self.loss_g, self.g_params)
 
-        self.grad_d = self.opt_d_2.compute_gradients(self.loss_d, self.d_params)
-        self.grad_g = self.opt_g_2.compute_gradients(self.loss_g, self.g_params)
+        self.global_step = tf.placeholder(tf.float32)
+        self.apply_grad_d = self.opt_d.apply_gradients(self.grad_d, global_step=tf.Variable(0))
+        self.apply_grad_g = self.opt_d.apply_gradients(self.grad_g, global_step=tf.Variable(0))
 
-        self.apply_grad_d = self.opt_d_2.apply_gradients(self.grad_d, global_step=tf.Variable(0))
-        self.apply_grad_g = self.opt_d_2.apply_gradients(self.grad_g, global_step=tf.Variable(0))
+        self.placeholder_d = [tf.placeholder(tf.float32) for i in xrange(len(self.d_params))]
+        self.placeholder_g = [tf.placeholder(tf.float32) for i in xrange(len(self.d_params))] #placeholder for array of values
 
-        self.placeholder_d = tf.placeholder(self.d_params.dtype, shape=self.d_params.get_shape())
-        self.placeholder_g = tf.placeholder(self.g_params.dtype, shape=self.g_params.get_shape())
+        # {i: tf.placeholder(tf.float32) for i in self.d_params.keys()} #placeholder for array of values
 
-        self.assign_d = self.d_params.update(placeholder_d)
-        self.assign_d = self.d_params.update(placeholder_d)
+        self.assign_d = [self.d_params[i].assign(self.placeholder_d[i]) for i in xrange(len(self.d_params))]   #[self.d_params[i].assign(self.placeholder_d[i]) for i in self.d_params.keys()] 
+        self.assign_g = [self.g_params[i].assign(self.placeholder_g[i]) for i in xrange(len(self.g_params))]   #[self.d_params[i].assign(self.placeholder_d[i]) for i in self.d_params.keys()] 
 
         #self.saver_d = tf.train.Saver(self.d_params)
         #self.saver_g = tf.train.Saver(self.g_params)
@@ -280,27 +260,22 @@ class GAN(object):
                 x = self.data.sample(self.batch_size)
                 z = self.gen.sample(self.batch_size)
 
-                d_path = self.saver_d.save(session, 'd')
-                g_path = self.saver_g.save(session, 'g')
+                weightsD = session.run(self.d_params)
+                weightsG = session.run(self.g_params)
 
-                self.weightsD = session.run(self.d_params)
-                self.weightsG = session.run(self.g_params)
-
-                self.compute_gradients(session,x,z)
+                #self.compute_gradients(session,x,z) ###Is this needed?
                 self.apply_gradients(session,x,z)
 
-                x = self.data.sample(self.batch_size)
-                z = self.gen.sample(self.batch_size)
+
+                #x = self.data.sample(self.batch_size)
+                #z = self.gen.sample(self.batch_size)
                 self.compute_gradients(session,x,z)
 
                 # Copy back original values of network
                 # Should try a better method
-                for i, v in enumerate(self.d_params):
-                    session.run(v.assign(self.weightsD[i]))
-                for i, v in enumerate(self.g_params):
-                    session.run(v.assign(self.weightsG[i]))
-                #self.saver_d.restore(session, d_path)
-                #self.saver_g.restore(session, g_path)
+                session.run(self.assign_d, dict(zip(self.placeholder_d, weightsD)))
+                session.run(self.assign_g, dict(zip(self.placeholder_g, weightsG)))
+
                 loss_d, loss_g = self.apply_gradients(session,x,z)
 
 
