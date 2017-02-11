@@ -28,13 +28,17 @@ tf.set_random_seed(seed)
 
 class DataDistribution(object):
     def __init__(self):
-        self.mu = 4
-        self.sigma = 0.5
+        self.mus = [-6,-3,3,6]
+        self.sigma = 0.01
 
     def sample(self, N):
-        samples = np.random.normal(self.mu, self.sigma, N)
+        sample_mus = np.random.choice(self.mus, N)
+        samples = [np.random.normal(mu, self.sigma) for mu in sample_mus]
         samples.sort()
         return samples
+
+    def pdf(self, x):
+        return np.mean([norm.pdf(x,loc=self.mus[i], scale=self.sigma) for i in xrange(len(self.mus))])
 
 
 class GeneratorDistribution(object):
@@ -86,19 +90,21 @@ def minibatch(input, num_kernels=5, kernel_dim=3):
 
 
 def optimizer(loss, var_list, initial_learning_rate):
+    '''
     decay = 0.95
     num_decay_steps = 150
     batch = tf.Variable(0)
     learning_rate = tf.train.exponential_decay(
         initial_learning_rate,
-        batch,
-        num_decay_steps,
-        decay,
-        staircase=True
+        batch
+        #num_decay_steps,
+        #decay,
+        #staircase=True
     )
-    optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(
+    '''
+    optimizer = tf.train.AdamOptimizer(initial_learning_rate, beta1=0.5).minimize(
         loss,
-        global_step=batch,
+        #global_step=batch,
         var_list=var_list
     )
     return optimizer
@@ -118,9 +124,9 @@ class GAN(object):
 
         # can use a higher learning rate when not using the minibatch layer
         if self.minibatch:
-            self.learning_rate = 0.005
+            self.learning_rate = 0.0005
         else:
-            self.learning_rate = 0.03
+            self.learning_rate = 0.0005
 
         self._create_model()
 
@@ -162,8 +168,8 @@ class GAN(object):
         self.d_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='Disc')
         self.g_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='Gen')
 
-        self.opt_d = optimizer(self.loss_d, self.d_params, self.learning_rate)
-        self.opt_g = optimizer(self.loss_g, self.g_params, self.learning_rate)
+        self.opt_d = optimizer(self.loss_d, self.d_params, 1e-4)
+        self.opt_g = optimizer(self.loss_g, self.g_params, 1e-3)
 
     def train(self):
         with tf.Session() as session:
@@ -173,7 +179,7 @@ class GAN(object):
             num_pretrain_steps = 1000
             for step in xrange(num_pretrain_steps):
                 d = (np.random.random(self.batch_size) - 0.5) * 10.0
-                labels = norm.pdf(d, loc=self.data.mu, scale=self.data.sigma)
+                labels = [self.data.pdf(dp) for dp in d] #norm.pdf(d, loc=self.data.mu, scale=self.data.sigma)
                 pretrain_loss, _ = session.run([self.pre_loss, self.pre_opt], {
                     self.pre_input: np.reshape(d, (self.batch_size, 1)),
                     self.pre_labels: np.reshape(labels, (self.batch_size, 1))
@@ -256,7 +262,7 @@ class GAN(object):
         ax.set_ylim(0, 1)
         plt.plot(p_x, pd, label='real data')
         plt.plot(p_x, pg, label='generated data')
-        plt.title('1D Generative Adversarial Network')
+        plt.title('1D Generative Adversarial Network -- Simple Gradient Descent')
         plt.xlabel('Data values')
         plt.ylabel('Probability density')
         plt.legend()
@@ -328,7 +334,7 @@ def main(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num-steps', type=int, default=1200,
+    parser.add_argument('--num-steps', type=int, default=3000,
                         help='the number of training steps to take')
     parser.add_argument('--batch-size', type=int, default=12,
                         help='the batch size')
